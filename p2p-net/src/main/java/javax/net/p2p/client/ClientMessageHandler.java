@@ -1,6 +1,5 @@
 package javax.net.p2p.client;
 
-import com.gupaoedu.rpc.consumer.proxy.*;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 

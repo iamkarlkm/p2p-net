@@ -2,15 +2,26 @@ package javax.net.p2p.map;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.text.DecimalFormat;
+import java.util.AbstractCollection;
+import java.util.AbstractMap;
+import java.util.AbstractSet;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Enumeration;
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Random;
 import java.util.Set;
+import java.util.function.Consumer;
+import org.apache.commons.codec.binary.Hex;
+//import javax.net.pool.PooledHashMapUnitFactory;
 
 /**
  * @author Karl Jinkai 2010-07-10
@@ -20,12 +31,24 @@ import java.util.Set;
  * 寻位和定位算法基于键对象之哈希值的每8个二进制位的状态所构造的多叉（256）分层（最多32层）树。 <br>
  *
  */
-public class HashMap256<K, V> implements Map, Serializable {
+public class HashMap256<K, V> extends AbstractMap<K, V> implements Map<K, V>, Serializable {
 
     private static final long serialVersionUID = 20100710L;
-    private int size;
+    private BigInteger size = BigInteger.ZERO;
+    private transient EntrySet<K, V> entrySet;
 
     private final HashMapUnit256<K, V> map = new HashMapUnit256<>();
+
+//    public HashMap256() {
+//        this.map = PooledHashMapUnitFactory.borrowObject();
+//    }
+//
+//    @Override
+//    protected void finalize() throws Throwable {
+//        super.finalize();
+//        PooledHashMapUnitFactory.returnObject(map);
+//    }
+
 
     //自定义序列化操作：
     private void writeObject(java.io.ObjectOutputStream s) throws IOException {
@@ -40,8 +63,7 @@ public class HashMap256<K, V> implements Map, Serializable {
 
     @Override
     public void clear() {
-        size = 0;
-
+        size = BigInteger.ZERO;
         map.clear();
 
     }
@@ -55,31 +77,250 @@ public class HashMap256<K, V> implements Map, Serializable {
         return v == null ? false : true;
     }
 
+//    @Override
+//    public Set entrySet() {
+//        Set<KeyValue256<K, V>> set = new HashSet<>(size);
+//        set.addAll(this.listEntry());
+//        return set;
+//    }
+    /**
+     * Returns a {@link Set} view of the mappings contained in this map. The set
+     * is backed by the map, so changes to the map are reflected in the set, and
+     * vice-versa. If the map is modified while an iteration over the set is in
+     * progress (except through the iterator's own <tt>remove</tt> operation, or
+     * through the
+     * <tt>setValue</tt> operation on a map entry returned by the iterator) the
+     * results of the iteration are undefined. The set supports element removal,
+     * which removes the corresponding mapping from the map, via the
+     * <tt>Iterator.remove</tt>,
+     * <tt>Set.remove</tt>, <tt>removeAll</tt>, <tt>retainAll</tt> and
+     * <tt>clear</tt> operations. It does not support the
+     * <tt>add</tt> or <tt>addAll</tt> operations.
+     *
+     * @return a set view of the mappings contained in this map
+     */
     @Override
-    public boolean containsValue(Object value) {
+    public Set<Map.Entry<K, V>> entrySet() {
+        EntrySet<K, V> es;
+        return (es = (EntrySet<K, V>) entrySet) != null ? es : (entrySet = new EntrySet<K, V>());
+    }
+//    public Set<Entry<K, V>> entrySet() {
+//        return (Set<Entry<K, V>>)(entrySet == null ? (entrySet = new EntrySet()) : entrySet);
+//    }
 
-        for (KeyValue256<K, V> kv : this.listEntry()) {
-            if ((value == null ? kv.value == null : value.equals(kv.value))) {
-                return true;
+    final class EntrySet<K, V> extends AbstractSet<Map.Entry<K, V>> {
+
+//        public EntrySet(HashMap256 instance) {
+//        }
+        @Override
+        public final int size() {
+            return size.intValue();
+        }
+
+        @Override
+        public final void clear() {
+            size = BigInteger.ZERO;
+            map.clear();
+        }
+
+        @Override
+        public final Iterator<Map.Entry<K, V>> iterator() {
+            return new EntryIterator(map);
+        }
+
+        @Override
+        public final boolean contains(Object o) {
+            if (!(o instanceof KeyValue256)) {
+                return false;
+            }
+            Map.Entry<K, V> e = (Map.Entry<K, V>) o;
+            K key = e.getKey();
+            V val = (V) map.get(key);
+            return val != null && val.equals(e.getValue());
+        }
+
+        @Override
+        public final boolean remove(Object o) {
+            if (o instanceof KeyValue256) {
+                KeyValue256<K, V> e = (KeyValue256<K, V>) o;
+                K key = e.key;
+                return map.remove(key) != null;
+            }
+            return false;
+        }
+
+//        public final Spliterator<Map.Entry<K, V>> spliterator() {
+//            return new EntrySpliterator<>(HashMap.this, 0, -1, 0, 0);
+//        }
+
+        @Override
+        public final void forEach(Consumer<? super Map.Entry<K, V>> action) {
+            if (action == null) {
+                throw new NullPointerException();
+            }
+            Iterator<Map.Entry<K, V>> it = iterator();
+            while (it.hasNext()) {
+                action.accept(it.next());
             }
         }
-        return false;
     }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @implSpec This implementation returns a set that subclasses
+     * {@link AbstractSet}. The subclass's iterator method returns a "wrapper
+     * object" over this map's <tt>entrySet()</tt> iterator. The <tt>size</tt>
+     * method delegates to this map's <tt>size</tt> method and the
+     * <tt>contains</tt> method delegates to this map's
+     * <tt>containsKey</tt> method.
+     *
+     * <p>
+     * The set is created the first time this method is called, and returned in
+     * response to all subsequent calls. No synchronization is performed, so
+     * there is a slight chance that multiple calls to this method will not all
+     * return the same set.
+     */
+    transient Set<K> keySet;
+    transient Collection<V> values;
 
     @Override
-    public Set entrySet() {
-        Set<KeyValue256<K, V>> set = new HashSet<>(size);
-        set.addAll(this.listEntry());
-        return set;
+    public Set<K> keySet() {
+        Set<K> ks = keySet;
+        if (ks == null) {
+            ks = new AbstractSet<K>() {
+                @Override
+                public Iterator<K> iterator() {
+                    return new Iterator<K>() {
+                        private Iterator<Entry<K, V>> i = entrySet().iterator();
+
+                        @Override
+                        public boolean hasNext() {
+                            return i.hasNext();
+                        }
+
+                        @Override
+                        public K next() {
+                            return i.next().getKey();
+                        }
+
+                        @Override
+                        public void remove() {
+                            i.remove();
+                        }
+                    };
+                }
+
+                @Override
+                public int size() {
+                    return size.intValue();
+                }
+
+                @Override
+                public boolean isEmpty() {
+                    return size.equals(BigInteger.ZERO);
+                }
+
+                @Override
+                public void clear() {
+                    size = BigInteger.ZERO;
+                    map.clear();
+                }
+
+                @Override
+                public boolean contains(Object key) {
+                    return map.get(key) != null;
+                }
+            };
+            keySet = ks;
+        }
+        return ks;
     }
 
-    public List<KeyValue256<K, V>> listEntry() {
-        ArrayList<KeyValue256<K, V>> resultEntry = new ArrayList<KeyValue256<K, V>>(size);
-        map.listEntry(resultEntry);
-        //map.entryList(resultEntry,0);
-        return resultEntry;
+    /**
+     * {@inheritDoc}
+     *
+     * @implSpec This implementation returns a collection that subclasses {@link
+     * AbstractCollection}. The subclass's iterator method returns a "wrapper
+     * object" over this map's <tt>entrySet()</tt> iterator. The <tt>size</tt>
+     * method delegates to this map's <tt>size</tt>
+     * method and the <tt>contains</tt> method delegates to this map's
+     * <tt>containsValue</tt> method.
+     *
+     * <p>
+     * The collection is created the first time this method is called, and
+     * returned in response to all subsequent calls. No synchronization is
+     * performed, so there is a slight chance that multiple calls to this method
+     * will not all return the same collection.
+     */
+    @Override
+    public Collection<V> values() {
+        Collection<V> vals = values;
+        if (vals == null) {
+            vals = new AbstractCollection<V>() {
+                @Override
+                public Iterator<V> iterator() {
+                    return new Iterator<V>() {
+                        private final Iterator<Entry<K, V>> i = entrySet().iterator();
 
+                        @Override
+                        public boolean hasNext() {
+                            return i.hasNext();
+                        }
+
+                        @Override
+                        public V next() {
+                            return i.next().getValue();
+                        }
+
+                        @Override
+                        public void remove() {
+                            i.remove();
+                        }
+                    };
+                }
+
+                @Override
+                public int size() {
+                    return size.intValue();
+                }
+
+                @Override
+                public boolean isEmpty() {
+                    return size.equals(BigInteger.ZERO);
+                }
+
+                @Override
+                public void clear() {
+                    size = BigInteger.ZERO;
+                    map.clear();
+                }
+
+                @Override
+                public boolean contains(Object value) {
+                    if (null == value) {
+                        throw new NullPointerException();
+                    }
+                    for (Entry<K, V> entry : entrySet()) {
+                        if (value.equals(entry.getValue())) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            };
+            values = vals;
+        }
+        return vals;
     }
+
+//    public List<KeyValue256<K, V>> listEntry() {
+//        ArrayList<KeyValue256<K, V>> resultEntry = new ArrayList<KeyValue256<K, V>>(size.intValue());
+//        map.listEntry(resultEntry);
+//        //map.entryList(resultEntry,0);
+//        return resultEntry;
+//
+//    }
 
     @Override
     public V get(Object key) {
@@ -92,21 +333,21 @@ public class HashMap256<K, V> implements Map, Serializable {
     @Override
     public boolean isEmpty() {
 
-        return size == 0 ? true : false;
+        return size.equals(BigInteger.ZERO);
     }
 
-    @Override
-    public Set keySet() {
-        Set<K> set = new HashSet<K>(size);
-        set.addAll(this.listKeys());
-        return set;
-    }
+//    @Override
+//    public Set keySet() {
+//        Set<K> set = new HashSet<K>(size);
+//        set.addAll(this.listKeys());
+//        return set;
+//    }
 
-    public List<K> listKeys() {
-        ArrayList<K> resultKey = new ArrayList<K>(size);
-        map.keyList(resultKey);
-        return resultKey;
-    }
+//    public List<K> listKeys() {
+//        ArrayList<K> resultKey = new ArrayList<K>(size);
+//        map.keyList(resultKey);
+//        return resultKey;
+//    }
 
     @Override
     public Object put(Object key, Object value) {
@@ -115,7 +356,7 @@ public class HashMap256<K, V> implements Map, Serializable {
         }
         V v = map.put((K) key, (V) value);
         if (v == null) {
-            size++;
+            size = size.add(BigInteger.ONE);
         }
         return v;
     }
@@ -132,13 +373,13 @@ public class HashMap256<K, V> implements Map, Serializable {
     }
 
     @Override
-    public Object remove(Object key) {
+    public V remove(Object key) {
         if (key == null) {
             return null;
         }
         V v = map.remove((K) key);
         if (v != null) {
-            size--;
+            size = size.subtract(BigInteger.ONE);
         }
         return v;
 
@@ -146,16 +387,161 @@ public class HashMap256<K, V> implements Map, Serializable {
 
     @Override
     public int size() {
+        return size.intValue();
+    }
+
+    public BigInteger realSize() {
         return size;
     }
 
-    @Override
-    public Collection values() {
-        ArrayList<V> resultValue = new ArrayList<V>(size);
-        for (KeyValue256<K, V> kv : listEntry()) {
-            resultValue.add(kv.value);
+//    @Override
+//    public Collection values() {
+//        ArrayList<V> resultValue = new ArrayList<>(size);
+//        for (KeyValue256<K, V> kv : listEntry()) {
+//            resultValue.add(kv.value);
+//        }
+//        return resultValue;
+//    }
+
+    /**
+     * Base of key, value, and entry Iterators. Adds fields to Traverser to
+     * support iterator.remove.
+     */
+    static class BaseIterator<K, V> {
+
+        HashMapUnit256[] layers = new HashMapUnit256[32];
+        int[] layerIndexs = new int[32];
+        Object[] table;        // current table; updated if resized
+        KeyValue256<K, V> next;         // the next entry to use
+        Iterator<KeyValue256<K, V>> nextIterator;
+        int layer = 0;              // index of bin to use next
+
+        BaseIterator(HashMapUnit256<K, V> map) {
+            this.table = map.getTable();
+            layerIndexs[layer] = -1;
         }
-        return resultValue;
+
+        public final boolean hasNext() {
+            if (nextIterator != null) {
+                if (nextIterator.hasNext()) {
+                    next = nextIterator.next();
+                } else {
+                    nextIterator = null;
+                }
+            }
+            int index = ++layerIndexs[layer];
+            if (table[index] == null) {
+                if (index == 255) {
+                    if (layer == 0) {//嵌套终止
+                        next = null;
+                        return false;
+                    }
+                    layer--;//返回上一层
+                    return this.hasNext();
+                }
+                //layerIndexs[layer]++;
+                return this.hasNext();
+            } else {
+                if (table[index].getClass() == KeyValue256.class) {
+                    next = (KeyValue256<K, V>) table[index];
+                } else {
+                    if (table[index].getClass() == LinkedList.class) {//最底层特殊处理
+                        //处理多重哈希冲突
+                        LinkedList<KeyValue256<K, V>> list = ((LinkedList<KeyValue256<K, V>>) table[index]);
+                        nextIterator = list.iterator();
+                        if (nextIterator.hasNext()) {
+                            next = nextIterator.next();
+                        } else {
+                            next = null;
+                        }
+                        if (index == 255) {//嵌套终止
+                            //return next != null;
+                            layer--;//返回上一层
+                            return this.hasNext();
+                        }
+                    } else {
+                        HashMapUnit256<K, V> mmu = (HashMapUnit256<K, V>) table[index];
+                        table = mmu.getTable();
+                        layers[layer] = mmu;
+                        //layerIndexs[layer]++;
+                        layer++;
+                        layerIndexs[layer] = -1;
+                        return this.hasNext();
+                    }
+                }
+            }
+            return next != null;
+        }
+
+        public final boolean hasMoreElements() {
+            return this.hasNext();
+        }
+
+        public final void remove() {
+            if (nextIterator != null) {
+                nextIterator.remove();
+            } else {
+                table[layerIndexs[layer]] = null;
+            }
+        }
+    }
+
+    static final class KeyIterator<K, V> extends BaseIterator<K, V>
+            implements Iterator<K>, Enumeration<K> {
+
+        KeyIterator(HashMapUnit256<K, V> map) {
+            super(map);
+        }
+
+        @Override
+        public final K next() {
+            if (next == null) {
+                throw new NoSuchElementException();
+            }
+            return next.key;
+        }
+
+        @Override
+        public final K nextElement() {
+            return next();
+        }
+    }
+
+    static final class ValueIterator<K, V> extends BaseIterator<K, V>
+            implements Iterator<V>, Enumeration<V> {
+
+        ValueIterator(HashMapUnit256<K, V> map) {
+            super(map);
+        }
+
+        @Override
+        public final V next() {
+            if (next == null) {
+                throw new NoSuchElementException();
+            }
+            return next.value;
+        }
+
+        @Override
+        public final V nextElement() {
+            return next();
+        }
+    }
+
+    static final class EntryIterator<K, V> extends BaseIterator<K, V>
+            implements Iterator<Map.Entry<K, V>> {
+
+        EntryIterator(HashMapUnit256<K, V> map) {
+            super(map);
+        }
+
+        @Override
+        public final Map.Entry<K, V> next() {
+            if (next == null) {
+                throw new NoSuchElementException();
+            }
+            return next;
+        }
     }
 
     //以下是扩展功能：
@@ -250,17 +636,24 @@ public class HashMap256<K, V> implements Map, Serializable {
     }
 
     public static void main(String[] args) {
+        int a = 0x6ad0f5;
+        System.out.println("a=" + a);
+        System.out.println(Hex.encodeHexString(ByteBuffer.allocate(4).putInt(0x6ad0f5).array()));
+        HashMap256<Integer, String> mapTest = new HashMap256<>();
+        mapTest.put('a', "test");
+        mapTest.put('c', "test");
         String key = "hjk";
         String value = "lyf";
         Random r = new Random();
         long endTime = 0;
         long times = 0;
         long timeStart = 0;
+        int testCount = 700;
         timeStart = System.currentTimeMillis();
         Map<String, String> map2 = new HashMap<String, String>();
 
-        for (int i = 0; i < 7000000; i++) {
-            map2.put(key + i, value);
+        for (int i = 0; i < testCount; i++) {
+            map2.put(i + key, value);
         }
         endTime = System.currentTimeMillis();
         times = endTime - timeStart;
@@ -280,8 +673,8 @@ public class HashMap256<K, V> implements Map, Serializable {
         timeStart = System.currentTimeMillis();
         HashMap256<String, String> map = new HashMap256<String, String>();
 
-        for (int i = 0; i < 7000000; i++) {
-            map.put(key + i, value);
+        for (int i = 0; i < testCount; i++) {
+            map.put(i + key, value);
         }
 
         //System.out.println(map.size());
@@ -343,32 +736,46 @@ public class HashMap256<K, V> implements Map, Serializable {
 //		//System.out.println("MyHashMap find:"+times);
 //		//List<KeyValue256<String, String>> list = map.entryList();
         Set<String> keys2 = map2.keySet();
-        timeStart = System.nanoTime();
+        timeStart = System.currentTimeMillis();
+        //timeStart = System.nanoTime();
         for (String s : keys2) {
             map2.get(s);
         }
-        endTime = System.nanoTime();
+        //endTime = System.nanoTime();
 
-        //endTime = System.currentTimeMillis();
+        endTime = System.currentTimeMillis();
         times = endTime - timeStart;
 
 //		System.out.println(map2.size())
-        System.out.println("HashMap find:" + (double) times / 7000000);
-
-        List<String> keys = map.listKeys();
-        timeStart = System.nanoTime();
-
+        //System.out.println("HashMap find:" + (double) times / testCount);
+        System.out.println("HashMap find:" + times);
+        int cnt = 0;
+        Set<String> keys = map.keySet();
+        //List<String> list = new ArrayList(keys);
+        System.out.println("keys:" + keys.size());
+        //timeStart = System.nanoTime();
+        timeStart = System.currentTimeMillis();
         for (String s : keys) {
+            //System.out.println(map.get(s));
             map.get(s);
+            //map.remove(s);
         }
-        endTime = System.nanoTime();
+//        for (String s : list) {
+//            System.out.println(s + ":" + map.get(s));
+//            if (map.get(s) != null) {
+//                cnt++;
+//            }
+//
+//        }
+        //endTime = System.nanoTime();
 
-        //endTime = System.currentTimeMillis();
+        endTime = System.currentTimeMillis();
         times = endTime - timeStart;
 
 //		System.out.println(map2.size());
-        System.out.println("MyHashMap find:" + (double) times / 7000000);
-
+       // System.out.println("MyHashMap find:" + (double) times / testCount);
+        System.out.println("MyHashMap find:" + times);
+        System.out.println("remove after keys:" + cnt);
 //		
 //		timeStart = System.currentTimeMillis();
 //		MyHashMap<Integer, String> map3 = new MyHashMap<Integer, String>();

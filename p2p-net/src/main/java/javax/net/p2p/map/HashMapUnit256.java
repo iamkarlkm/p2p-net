@@ -4,26 +4,44 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+import java.util.Date;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
-import javax.net.p2p.utils.SecurityUtils;
-//public class MyMapUnit64<K extends HashCode64,V> implements Serializable{
+//import javax.net.pool.PooledHashMapUnitFactory;
 
 public class HashMapUnit256<K, V> implements Serializable {
 
     private static final long serialVersionUID = 1L;
     private static final Charset UTF_8 = Charset.forName("utf-8");
-    private static final int LAYER_LIMIT = 31;
-    public static int conflictCount;
+    //private static final int (code.length-1) = 31;
+    public int conflictCount;
+    public int nodeCount;
     private final Object[] table = new Object[256];
 
+    public int getConflictCount() {
+        return conflictCount;
+    }
+
+    public int getNodeCount() {
+        return nodeCount;
+    }
+
+    public Object[] getTable() {
+        return table;
+    }
+
+    public static byte[] hashCode256(Byte key) {
+        return ByteBuffer.allocate(1).put(key).array();
+    }
+
+    public static byte[] hashCode256(Short key) {
+        return ByteBuffer.allocate(2).putShort(key).array();
+    }
+
     public static byte[] hashCode256(Object key) {
-        if (key instanceof HashCode256) {
-            return ((HashCode256) key).hashCode256();
-        }
-        final byte[] array = new byte[32];
         if (key.getClass() == String.class) {
+            final byte[] array = new byte[32];
             byte[] bytes = ((String) key).getBytes(UTF_8);
             if (bytes.length >= 28) {
                 System.arraycopy(bytes, 0, array, 0, 28);
@@ -32,73 +50,118 @@ public class HashMapUnit256<K, V> implements Serializable {
                     array[i] = hashcode[j];
                 }
             } else {
-                final byte[] sha256 = SecurityUtils.sha256((String) key);
+                //final byte[] sha256 = SecurityUtils.sha256((String) key);
                 System.arraycopy(bytes, 0, array, 0, bytes.length);
-                System.arraycopy(sha256, bytes.length, array, bytes.length, 32 - bytes.length);
+                //System.arraycopy(sha256, bytes.length, array, bytes.length, 32 - bytes.length);
+                //System.
             }
+            return array;
+        } else if (key.getClass() == Integer.class) {
+            return ByteBuffer.allocate(4).putInt((int) key).array();
+        } else if (key.getClass() == Long.class) {
+            return ByteBuffer.allocate(8).putLong((long) key).array();
+        } else if (key.getClass() == Date.class) {
+            return ByteBuffer.allocate(8).putLong(((Date) key).getTime()).array();
+        } else if (key.getClass() == Short.class) {
+            return ByteBuffer.allocate(2).putShort((short) key).array();
+        } else if (key.getClass() == Byte.class) {
+            return ByteBuffer.allocate(1).put((byte) key).array();
+        } else if (key.getClass() == Character.class) {
+            return ByteBuffer.allocate(2).putChar((char) key).array();
+        } else if (key instanceof Sha256) {
+            return ((Sha256) key).hashCode256();
         }
-        return array;
+        return ByteBuffer.allocate(4).putInt(key.hashCode()).array();
     }
 
     public V put(K key, V value) {
         KeyValue256<K, V> pair = new KeyValue256<>(key, value);
-        byte[] code = pair.hashCode256();
-        //System.out.println("put:"+code);
-        int hash = (int) (code[0]);
+        byte[] code = hashCode256(key);
+        if (code.length - 1 == 0) {
+            V v = endPut(pair, code);
+            if (v == null) {
+                nodeCount++;
+            }
+            return v;
+        }
+        int hash = (int) (code[0] & 0xff);
 
         if (table[hash] == null) {
             table[hash] = pair;
+            nodeCount++;
             return null;
         } else {
-
             if (table[hash].getClass() == KeyValue256.class) {
                 KeyValue256<K, V> pair1 = (KeyValue256<K, V>) table[hash];
+                if (pair1.key.equals(pair.key)) {
+                    V oldValue = pair1.value;
+                    pair1.value = pair.value;
+                    return oldValue;
+                }
+                //HashMapUnit256<K, V> mmu = PooledHashMapUnitFactory.borrowObject();
                 HashMapUnit256<K, V> mmu = new HashMapUnit256<>();
                 mmu.put(pair1, pair1.hashCode256(), 1);
                 mmu.put(pair, code, 1);
                 table[hash] = mmu;
+                nodeCount++;
                 return null;
-
             }
 
             HashMapUnit256<K, V> mmu = (HashMapUnit256<K, V>) table[hash];
-            return mmu.put(pair, code, 1);
-
+            V v = mmu.put(pair, code, 1);
+            if (v == null) {
+                nodeCount++;
+            }
+            return v;
         }
-
     }
 
     V put(KeyValue256<K, V> pair, byte[] code, int index) {
-        if (index >= LAYER_LIMIT) {
-            return endPut(pair, code);
+        if (index >= (code.length - 1)) {
+            V v = endPut(pair, code);
+            if (v == null) {
+                nodeCount++;
+            }
+            return v;
         }
-        int hash = (int) (code[index]);
+        int hash = (int) (code[index] & 0xff);
         if (table[hash] == null) {
 
             table[hash] = pair;
+            nodeCount++;
             return null;
         } else {
             //index++;
             if (table[hash].getClass() == KeyValue256.class) {
                 KeyValue256<K, V> pair1 = (KeyValue256<K, V>) table[hash];
+                if (pair1.key.equals(pair.key)) {
+                    V oldValue = pair1.value;
+                    pair1.value = pair.value;
+                    return oldValue;
+                }
+                //HashMapUnit256<K, V> mmu = PooledHashMapUnitFactory.borrowObject();
                 HashMapUnit256<K, V> mmu = new HashMapUnit256<>();
                 mmu.put(pair1, pair1.hashCode256(), index + 1);
+                mmu.put(pair, code, index + 1);
                 table[hash] = mmu;
-                return mmu.put(pair, code, index + 1);
-
+                nodeCount++;
+                return null;
             }
-            //MyMapUnit<K, V> mmu = (MyMapUnit<K, V>)table[hash];
-            return ((HashMapUnit256<K, V>) table[hash]).put(pair, code, index + 1);
-
+            V v = ((HashMapUnit256<K, V>) table[hash]).put(pair, code, index + 1);
+            if (v == null) {
+                nodeCount++;
+            }
+            return v;
         }
 
     }
 
     private V endPut(KeyValue256<K, V> pair, byte[] code) {
-        int hash = (int) (code[LAYER_LIMIT]);
+        int hash = (int) (code[(code.length - 1)] & 0xff);
 
         if (table[hash] == null) {
             table[hash] = pair;
+            nodeCount++;
             return null;
         } else {
             if (table[hash].getClass() == KeyValue256.class) {
@@ -113,6 +176,7 @@ public class HashMapUnit256<K, V> implements Serializable {
                 list.add(pairOld);
                 list.add(pair);
                 table[hash] = list;
+                nodeCount++;
                 return null;
 
             }
@@ -130,27 +194,39 @@ public class HashMapUnit256<K, V> implements Serializable {
             }
             // 没找到同key元素，执行添加操作
             list.add(pair);
+            nodeCount++;
             return null;
         }
     }
 
-    public V get(K key) {
+    public V get(Object key) {
         //int code = KeyValue.getCode(key);
         //System.out.println("get:"+code);
         byte[] code = hashCode256(key);
         int index = 0;
 
-        int hash = (int) (code[0]);
+        int hash = (int) (code[0] & 0xff);
         if (table[hash] != null) {
             if (table[hash].getClass() == KeyValue256.class) {
                 KeyValue256<K, V> pair = (KeyValue256<K, V>) table[hash];
                 return (key.equals(pair.key)) ? pair.value : null;
 
             } else {
+                //return (index >= (code.length-1))? endGet( key,code) : mmu.get(key,code,index+1);
+                if (table[hash].getClass() == LinkedList.class) {//最底层特殊处理
+                    //处理多重哈希冲突
+                    LinkedList<KeyValue256<K, V>> list = ((LinkedList<KeyValue256<K, V>>) table[hash]);
+                    Iterator<KeyValue256<K, V>> it = list.iterator();
+                    while (it.hasNext()) {
+                        KeyValue256<K, V> kv = it.next();
+                        if (key.equals(kv.key)) {
+                            return kv.value;// 找到同key元素
+                        }
+                    }
+                    return null;// 没找到同key元素
+                    //return endGet( key,code);
+                }
                 return ((HashMapUnit256<K, V>) table[hash]).get(key, code, index + 1);
-//				MyMapUnit<K, V> mmu = (MyMapUnit<K, V>)table[hash];
-//				
-//				return mmu.get(key,bytes,index+1);
             }
 
         }
@@ -159,15 +235,15 @@ public class HashMapUnit256<K, V> implements Serializable {
     }
 
     private V get(Object key, byte[] code, int index) {
-        int hash = (int) (code[LAYER_LIMIT]);
+        int hash = (int) (code[index] & 0xff);
         if (table[hash] != null) {
             if (table[hash].getClass() == KeyValue256.class) {
                 KeyValue256<K, V> pair = (KeyValue256<K, V>) table[hash];
                 return (key.equals(pair.key)) ? pair.value : null;
             } else {
 
-                //return (index >= LAYER_LIMIT)? endGet( key,code) : mmu.get(key,code,index+1);
-                if (index >= LAYER_LIMIT) {//最底层特殊处理
+                //return (index >= (code.length-1))? endGet( key,code) : mmu.get(key,code,index+1);
+                if (table[hash].getClass() == LinkedList.class) {//最底层特殊处理
                     //处理多重哈希冲突
                     LinkedList<KeyValue256<K, V>> list = ((LinkedList<KeyValue256<K, V>>) table[hash]);
                     Iterator<KeyValue256<K, V>> it = list.iterator();
@@ -187,7 +263,7 @@ public class HashMapUnit256<K, V> implements Serializable {
         return null;
     }
 
-    public void listEntry(List<KeyValue256<K, V>> resultEntry) {
+    public void listEntry(List<KeyValue256<K, V>> resultEntry, int layerLimit) {
         int index = 0;
         for (int i = 128; i < 256; i++) {//首先处理负整数集
             if (table[i] != null) {
@@ -214,8 +290,8 @@ public class HashMapUnit256<K, V> implements Serializable {
 
     }
 
-    private void listEntry(List<KeyValue256<K, V>> list, int index) {
-        if (index >= LAYER_LIMIT) {
+    private void listEntry(List<KeyValue256<K, V>> list, int index, int layerLimit) {
+        if (index >= layerLimit) {
             endListEntry(list);
             return;
         }
@@ -251,7 +327,24 @@ public class HashMapUnit256<K, V> implements Serializable {
 
     }
 
-    public void keyList(List<K> list) {
+    public Object nextEntry(int layer, int layerLimit) {
+        if (layer >= layerLimit) {
+            for (int i = 0; i < 256; i++) {
+                if (table[i] != null) {
+                    return table[i];
+                }
+            }
+            return null;
+        }
+        for (int i = 0; i < 256; i++) {
+            if (table[i] != null) {
+                return table[i];
+            }
+        }
+        return null;
+    }
+
+    public void keyList(List<K> list, int layerLimit) {
         int index = 0;
         for (int i = 128; i < 256; i++) {//首先处理负整数集
             if (table[i] != null) {
@@ -277,7 +370,7 @@ public class HashMapUnit256<K, V> implements Serializable {
         }
     }
 
-    public void unsignedKeyList(List<K> list) {
+    public void unsignedKeyList(List<K> list, int layerLimit) {
         int index = 0;
         for (int i = 0; i < 256; i++) {
             if (table[i] != null) {
@@ -286,15 +379,15 @@ public class HashMapUnit256<K, V> implements Serializable {
                     list.add(pair.key);
                 } else {
                     HashMapUnit256<K, V> mmu = (HashMapUnit256<K, V>) table[i];
-                    mmu.keyList(list, index + 1);
+                    mmu.keyList(list, index + 1, layerLimit);
                 }
             }
         }
 
     }
 
-    private void keyList(List<K> list, int index) {
-        if (index >= LAYER_LIMIT) {
+    private void keyList(List<K> list, int index, int layerLimit) {
+        if (index >= layerLimit) {
             endKeyList(list);
             return;
         }
@@ -305,7 +398,7 @@ public class HashMapUnit256<K, V> implements Serializable {
                     list.add(pair.key);
                 } else {
                     HashMapUnit256<K, V> mmu = (HashMapUnit256<K, V>) table[i];
-                    mmu.keyList(list, index + 1);
+                    mmu.keyList(list, index + 1, layerLimit);
                 }
             }
         }
@@ -321,6 +414,7 @@ public class HashMapUnit256<K, V> implements Serializable {
                 } else {//最底层特殊处理
                     //处理多重哈希冲突
                     LinkedList<KeyValue256<K, V>> list = ((LinkedList<KeyValue256<K, V>>) table[i]);
+
                     list.forEach((kv) -> {
                         result.add(kv.key);
                     });
@@ -330,48 +424,23 @@ public class HashMapUnit256<K, V> implements Serializable {
 
     }
 
-    V remove(K key) {
+    V remove(Object key) {
         byte[] code = hashCode256(key);
         int index = 0;
-        int hash = (int) (code[LAYER_LIMIT]);
+        int hash = (int) (code[index] & 0xff);
         if (table[hash] != null) {
             if (table[hash].getClass() == KeyValue256.class) {
                 KeyValue256<K, V> pair = (KeyValue256<K, V>) table[hash];
                 if (key.equals(pair.key)) {
                     V oldValue = pair.value;
                     table[hash] = null;
+                    nodeCount--;
                     return oldValue;
                 }
                 return null;
 
             } else {
-                return ((HashMapUnit256<K, V>) table[hash]).remove(key, code, index + 1);
-//				MyMapUnit<K, V> mmu = (MyMapUnit<K, V>)table[hash];
-//				
-//				return mmu.get(key,bytes,index+1);
-            }
-
-        }
-        return null;
-
-    }
-
-    private V remove(K key, byte[] code, int index) {
-
-        int hash = (int) (code[LAYER_LIMIT]);
-
-        if (table[hash] != null) {
-            if (table[hash].getClass() == KeyValue256.class) {
-                KeyValue256<K, V> pair = (KeyValue256<K, V>) table[hash];
-                if (key.equals(pair.key)) {
-                    V oldValue = pair.value;
-                    table[hash] = null;
-                    return oldValue;
-                }
-                return null;
-
-            } else {
-                if (index >= LAYER_LIMIT) {//最底层特殊处理
+                if (index >= (code.length - 1)) {//最底层特殊处理
                     //处理多重哈希冲突
                     LinkedList<KeyValue256<K, V>> list = ((LinkedList<KeyValue256<K, V>>) table[hash]);
                     Iterator<KeyValue256<K, V>> it = list.iterator();
@@ -379,6 +448,7 @@ public class HashMapUnit256<K, V> implements Serializable {
                         KeyValue256<K, V> kv = it.next();
                         if (key.equals(kv.key)) {
                             it.remove();
+                            nodeCount--;
                             return kv.value;// 找到同key元素
                         }
                     }
@@ -386,9 +456,77 @@ public class HashMapUnit256<K, V> implements Serializable {
                     //return endGet( key,code);
                 }
                 HashMapUnit256<K, V> mmu = (HashMapUnit256<K, V>) table[hash];
-                return mmu.remove(key, code, index + 1);
+                V v = mmu.remove(key, code, index + 1);
+                if (v != null) {
+                    nodeCount--;
+                    if (mmu.nodeCount == 1) {
+                        for (int i = 0; i < mmu.table.length; i++) {
+                            if (mmu.table[i] != null) {
+                                table[hash] = mmu.table[i];
+                                break;
+                            }
+                        }
+                    } else if (mmu.nodeCount <= 0) {
+                        table[hash] = null;
+                        //PooledHashMapUnitFactory.returnObject(mmu);
+                    }
+                }
+                return v;
             }
+        }
+        return null;
 
+    }
+
+    private V remove(Object key, byte[] code, int index) {
+
+        int hash = (int) (code[index] & 0xff);
+
+        if (table[hash] != null) {
+            if (table[hash].getClass() == KeyValue256.class) {
+                KeyValue256<K, V> pair = (KeyValue256<K, V>) table[hash];
+                if (key.equals(pair.key)) {
+                    V oldValue = pair.value;
+                    table[hash] = null;
+                    nodeCount--;
+                    return oldValue;
+                }
+                return null;
+
+            } else {
+                if (index >= (code.length - 1)) {//最底层特殊处理
+                    //处理多重哈希冲突
+                    LinkedList<KeyValue256<K, V>> list = ((LinkedList<KeyValue256<K, V>>) table[hash]);
+                    Iterator<KeyValue256<K, V>> it = list.iterator();
+                    while (it.hasNext()) {
+                        KeyValue256<K, V> kv = it.next();
+                        if (key.equals(kv.key)) {
+                            it.remove();
+                            nodeCount--;
+                            return kv.value;// 找到同key元素
+                        }
+                    }
+                    return null;// 没找到同key元素
+                    //return endGet( key,code);
+                }
+                HashMapUnit256<K, V> mmu = (HashMapUnit256<K, V>) table[hash];
+                V v = mmu.remove(key, code, index + 1);
+                if (v != null) {
+                    nodeCount--;
+                    if (mmu.nodeCount == 1) {
+                        for (int i = 0; i < mmu.table.length; i++) {
+                            if (mmu.table[i] != null) {
+                                table[hash] = mmu.table[i];
+                                break;
+                            }
+                        }
+                    } else if (mmu.nodeCount <= 0) {
+                        table[hash] = null;
+                        //PooledHashMapUnitFactory.returnObject(mmu);
+                    }
+                }
+                return v;
+            }
         }
         return null;
     }
@@ -396,6 +534,13 @@ public class HashMapUnit256<K, V> implements Serializable {
     void clear() {
         for (int i = 0; i < 256; i++) {
             table[i] = null;
+//            if (null != table[i]) {
+//                if (table[i].getClass() == HashMapUnit256.class) {
+//                    PooledHashMapUnitFactory.returnObject((HashMapUnit256) table[i]);
+//                } else {
+//                    table[i] = null;
+//                }
+//            }
         }
     }
 

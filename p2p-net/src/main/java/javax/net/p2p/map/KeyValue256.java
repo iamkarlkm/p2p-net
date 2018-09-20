@@ -6,11 +6,10 @@ import java.util.Map.Entry;
 /**
  *
  * @author KARL Jinkai 2010-07-10
- * @Info MyHashMap64位版本使用的存储键值对类
+ * @Info HashMap256位版本使用的存储键值对类
  * @param <K>　键对象
  * @param <V>　值对象
  */
-//public class KeyValue64<K extends HashCode64, V> implements Entry<K, V>,Serializable{
 public class KeyValue256<K, V> implements Entry<K, V>, Serializable {
 
     private static final long serialVersionUID = 20100710L;

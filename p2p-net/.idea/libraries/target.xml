@@ -1,0 +1,14 @@
+<component name="libraryTable">
+  <library name="target">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/target/p2p-net.jar!/" />
+      <root url="jar://$PROJECT_DIR$/target/p2p-net-demo.jar!/" />
+      <root url="jar://$PROJECT_DIR$/target/p2p-net-sources.jar!/" />
+      <root url="jar://$PROJECT_DIR$/target/p2p-net-demo-dist.zip!/" />
+      <root url="jar://$PROJECT_DIR$/target/p2p-net-demo-sources.jar!/" />
+      <root url="jar://$PROJECT_DIR$/target/p2p-net-dist.zip!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
